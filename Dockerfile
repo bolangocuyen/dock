@@ -127,6 +127,7 @@ RUN sudo mkdir -p /out
 RUN sudo cp -a /toolchain/llvm-project /out/llvm-project
 
 # ── AOSP external/ dependency sources ────────────────────────────────────────
+RUN sudo mkdir -p /src && sudo mkdir -p /src/{bzip2,zlib,xz,zstd,libffi,readline,ncurses,mpdecimal}
 RUN git clone --depth 1 \
         https://android.googlesource.com/platform/external/bzip2 \
         /src/bzip2
