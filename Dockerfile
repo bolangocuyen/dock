@@ -883,11 +883,11 @@ RUN cat > ${PREFIX}/bin/linker64 << 'LINKER_EOF'
 #   qemu-aarch64 -L /path/to/ndk/sysroot /system/bin/clang --version
 exec "$@"
 LINKER_EOF
-chmod 755 ${PREFIX}/bin/linker64
+RUN chmod 755 ${PREFIX}/bin/linker64
 
 # ── /system/etc/profile ───────────────────────────────────────────────────────
-RUN install -d ${PREFIX}/etc; \
-    cat > ${PREFIX}/etc/profile << 'PROFILE_EOF'
+RUN install -d ${PREFIX}/etc && \
+cat > ${PREFIX}/etc/profile << 'PROFILE_EOF'
 #!/system/bin/sh
 # /system/etc/profile — Android /system runtime environment
 # Source: . /system/etc/profile
