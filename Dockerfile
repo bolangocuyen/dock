@@ -122,7 +122,8 @@ RUN git clone --depth 1 \
 # llvm-bootstrap stage where we have the full Python environment.
 #
 # We do a plain cp -a (not rsync) since this is a fresh directory.
-RUN cp -a /toolchain/llvm-project /out/llvm-project
+RUN sudo mkdir -p /out
+RUN sudo cp -a /toolchain/llvm-project /out/llvm-project
 
 # ── AOSP external/ dependency sources ────────────────────────────────────────
 RUN git clone --depth 1 \
