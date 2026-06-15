@@ -1,0 +1,114 @@
+# =============================================================================
+# docker-compose.yml — Android aarch64 /system Bootstrap
+# LLVM source:  android.googlesource.com/toolchain/llvm-project
+# Build system: android.googlesource.com/toolchain/llvm_android
+#
+# Usage (iterative development — builds only the named stage and its deps):
+#   docker compose build aosp-base       # NDK + both AOSP toolchain clones + deps
+#   docker compose build llvm-bootstrap  # Host x86_64 stage1 clang (~15 min)
+#   docker compose build llvm-cross      # AArch64 target clang (~45 min)
+#   docker compose build libs-1          # bzip2 / zlib / xz / zstd
+#   docker compose build libs-2          # libffi / ncurses / readline / mpdecimal
+#   docker compose build tools-stage     # make / ninja / cmake (aarch64)
+#   docker compose build curl-stage      # OpenSSL + curl
+#   docker compose build assembler       # Merge all artifacts + ELF validation
+#   docker compose build final           # FROM scratch distroless image
+# =============================================================================
+
+version: "3.9"
+
+x-build-args: &common-build-args
+  NDK_VERSION: "r27d"
+  NDK_HOST_TAG: "linux-x86_64"
+  API_LEVEL: "35"
+  PREFIX: "/system"
+
+services:
+  aosp-base:
+    image: android-bootstrap/aosp-base:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: aosp-base
+      args: *common-build-args
+
+  llvm-bootstrap:
+    image: android-bootstrap/llvm-bootstrap:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: llvm-bootstrap
+      args: *common-build-args
+    depends_on:
+      - aosp-base
+
+  llvm-cross:
+    image: android-bootstrap/llvm-cross:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: llvm-cross
+      args: *common-build-args
+    depends_on:
+      - llvm-bootstrap
+
+  libs-1:
+    image: android-bootstrap/libs-1:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: libs-1
+      args: *common-build-args
+    depends_on:
+      - aosp-base
+
+  libs-2:
+    image: android-bootstrap/libs-2:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: libs-2
+      args: *common-build-args
+    depends_on:
+      - libs-1
+
+  tools-stage:
+    image: android-bootstrap/tools-stage:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: tools-stage
+      args: *common-build-args
+    depends_on:
+      - libs-2
+
+  curl-stage:
+    image: android-bootstrap/curl-stage:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: curl-stage
+      args: *common-build-args
+    depends_on:
+      - tools-stage
+
+  assembler:
+    image: android-bootstrap/assembler:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: assembler
+      args: *common-build-args
+    depends_on:
+      - llvm-cross
+      - curl-stage
+
+  final:
+    image: android-system-aarch64:api35-aosp-llvm
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: final
+      args: *common-build-args
+    depends_on:
+      - assembler

@@ -1,0 +1,312 @@
+name: Android aarch64 Bootstrap Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ndk_version:
+        description: "Android NDK version"
+        required: true
+        default: "r27d"
+        type: string
+      api_level:
+        description: "Android API level"
+        required: true
+        default: "35"
+        type: string
+      target_stage:
+        description: "Dockerfile target stage (leave blank for final)"
+        required: false
+        default: "final"
+        type: choice
+        options:
+          - final
+          - assembler
+          - curl-stage
+          - tools-stage
+          - libs-2
+          - libs-1
+          - llvm-cross
+          - llvm-bootstrap
+          - aosp-base
+      push_image:
+        description: "Push final image to GHCR after a successful build"
+        required: false
+        default: false
+        type: boolean
+
+# Only one run per ref at a time; cancel older runs if re-triggered.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Image name in GitHub Container Registry
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository_owner }}/android-system-aarch64
+
+jobs:
+  build:
+    name: "Build → ${{ inputs.target_stage }} (NDK ${{ inputs.ndk_version }}, API ${{ inputs.api_level }})"
+
+    # LLVM cross-compilation needs significant resources.
+    # A standard GitHub-hosted runner has 2 vCPU / 7 GB RAM — sufficient for
+    # libs-* and tools-* stages but will be very slow for llvm-bootstrap and
+    # llvm-cross.  For those stages, a self-hosted runner with 16+ cores and
+    # 32+ GB RAM is strongly recommended.  Set LARGE_RUNNER in your repo
+    # variables to override (e.g. "self-hosted,linux,aarch64,large").
+    runs-on: ${{ vars.LARGE_RUNNER || 'ubuntu-24.04' }}
+
+    # Give the GITHUB_TOKEN permission to push to GHCR if push_image is true.
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Free disk space ───────────────────────────────────────────────────
+      # The LLVM build needs ~60 GB of working space on the runner.
+      # GitHub-hosted runners ship with ~20 GB pre-consumed by tool caches.
+      # This step reclaims ~30 GB by removing unused toolchains.
+      - name: Free disk space
+        run: |
+          echo "=== Disk before cleanup ==="
+          df -h /
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /usr/local/share/powershell \
+            /usr/share/swift \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /usr/lib/jvm \
+            "$AGENT_TOOLSDIRECTORY" \
+            2>/dev/null || true
+          sudo apt-get clean
+          sudo docker image prune -af 2>/dev/null || true
+          echo "=== Disk after cleanup ==="
+          df -h /
+
+      # ── 3. Set up Docker Buildx ──────────────────────────────────────────────
+      # Buildx is required for multi-stage build cache exports.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          # Use the docker-container driver so cache mounts work correctly
+          driver: docker-container
+          driver-opts: |
+            network=host
+
+      # ── 4. Log in to GHCR (only when pushing) ────────────────────────────────
+      - name: Log in to GitHub Container Registry
+        if: ${{ inputs.push_image == true }}
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 5. Derive image metadata ──────────────────────────────────────────────
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # Branch-based tag, e.g. main → :main
+            type=ref,event=branch
+            # SHA-based tag for traceability, e.g. :sha-a1b2c3d
+            type=sha,prefix=sha-,format=short
+            # Explicit version tag from NDK + API inputs
+            type=raw,value=ndk${{ inputs.ndk_version }}-api${{ inputs.api_level }}
+
+      # ── 6. Restore BuildKit layer cache ──────────────────────────────────────
+      # Stages are cached individually by name so an llvm-bootstrap cache hit
+      # avoids re-spending 15+ minutes on the host tblgen build.
+      # The cache key embeds a hash of the Dockerfile to invalidate on changes.
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          # Primary key: exact Dockerfile hash + NDK + API
+          key: buildx-${{ runner.os }}-ndk${{ inputs.ndk_version }}-api${{ inputs.api_level }}-${{ hashFiles('Dockerfile') }}
+          # Fallback: same NDK/API with any Dockerfile (partial cache hit)
+          restore-keys: |
+            buildx-${{ runner.os }}-ndk${{ inputs.ndk_version }}-api${{ inputs.api_level }}-
+            buildx-${{ runner.os }}-ndk${{ inputs.ndk_version }}-
+
+      # ── 7. Build ──────────────────────────────────────────────────────────────
+      # The build is broken into two sub-steps:
+      #
+      #   7a. LLVM stages (llvm-bootstrap → llvm-cross)
+      #       These are the slowest stages (~15 min + ~45 min on large runners).
+      #       We build them first and export their layers to cache so that a
+      #       re-run that only changes libs or curl doesn't rebuild LLVM.
+      #
+      #   7b. Full target stage build
+      #       Continues from the cached LLVM layers and builds everything else.
+      #
+      # Cache strategy:
+      #   cache-from: type=local,src=... reads previously exported layers.
+      #   cache-to:   type=local,dest=...,mode=max writes all intermediate layers
+      #               (mode=max = cache every stage, not just the final output).
+      #   cache-to uses a temp path (/tmp/.buildx-cache-new) that is moved over
+      #   the restore path at the end to avoid cache corruption on partial writes.
+
+      - name: Build llvm-bootstrap stage (cache prime)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: llvm-bootstrap
+          push: false
+          # Don't load into Docker daemon — we only want the cache export
+          load: false
+          build-args: |
+            NDK_VERSION=${{ inputs.ndk_version }}
+            API_LEVEL=${{ inputs.api_level }}
+          cache-from: type=local,src=/tmp/.buildx-cache
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          # Emit build progress in plain text so log lines are parseable
+          outputs: type=cacheonly
+
+      - name: Build llvm-cross stage (cache prime)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: llvm-cross
+          push: false
+          load: false
+          build-args: |
+            NDK_VERSION=${{ inputs.ndk_version }}
+            API_LEVEL=${{ inputs.api_level }}
+          cache-from: type=local,src=/tmp/.buildx-cache-new
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          outputs: type=cacheonly
+
+      - name: Build target stage → ${{ inputs.target_stage }}
+        id: docker-build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: ${{ inputs.target_stage }}
+          # Load into the local Docker daemon so we can inspect + validate
+          load: true
+          # Push to GHCR only if push_image is true AND target is final
+          push: ${{ inputs.push_image == true && inputs.target_stage == 'final' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            NDK_VERSION=${{ inputs.ndk_version }}
+            API_LEVEL=${{ inputs.api_level }}
+          cache-from: type=local,src=/tmp/.buildx-cache-new
+          cache-to: type=local,dest=/tmp/.buildx-cache-new,mode=max
+          provenance: false
+
+      # ── 8. Rotate cache ───────────────────────────────────────────────────────
+      # Move the new cache over the old one atomically.  Without this, the cache
+      # grows unboundedly across runs because old layers are never evicted.
+      - name: Rotate build cache
+        if: always()
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache 2>/dev/null || true
+
+      # ── 9. ELF validation (assembler stage and above only) ───────────────────
+      # Re-uses the image already loaded into the daemon from step 7.
+      # Skips validation for early stages (aosp-base, llvm-bootstrap, etc.)
+      # where the /system tree doesn't exist yet.
+      - name: ELF validation
+        if: >
+          inputs.target_stage == 'assembler' ||
+          inputs.target_stage == 'final'
+        run: |
+          IMAGE="${{ steps.docker-build.outputs.imageid }}"
+
+          echo "──────────────────────────────────────────────────────"
+          echo "  ELF Validation — /system/bin/clang"
+          echo "──────────────────────────────────────────────────────"
+
+          # Run the assembler stage image which still has the NDK tools available
+          # (the final scratch image has no shell, so we run against assembler).
+          ASSEMBLER_IMG=$(docker images --filter "label=stage=assembler" -q | head -1)
+          TARGET_IMG="${IMAGE}"
+
+          # For the ELF checks we need an image that has llvm-readelf on PATH.
+          # If target is 'final' (scratch), re-pull the assembler image by tag.
+          VALIDATE_IMG=$(
+            if [ "${{ inputs.target_stage }}" = "final" ]; then
+              docker build \
+                --target assembler \
+                --build-arg NDK_VERSION=${{ inputs.ndk_version }} \
+                --build-arg API_LEVEL=${{ inputs.api_level }} \
+                -q \
+                -f Dockerfile .
+            else
+              echo "${TARGET_IMG}"
+            fi
+          )
+
+          docker run --rm "${VALIDATE_IMG}" bash -c '
+            NDK_BIN=/opt/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin
+            CLANG=/system/bin/clang
+            READELF="${NDK_BIN}/llvm-readelf"
+
+            echo ""
+            echo "── ELF Class & Machine ──────────────────────────────"
+            ${READELF} -h "${CLANG}" | grep -E "(Class|Machine|Type)"
+
+            echo ""
+            echo "── NEEDED libraries ─────────────────────────────────"
+            ${READELF} -d "${CLANG}" | grep NEEDED
+
+            echo ""
+            echo "── PT_INTERP (Bionic linker64 path) ─────────────────"
+            ${READELF} -l "${CLANG}" | grep -E "Requesting|interpreter"
+
+            echo ""
+            echo "── RUNPATH ──────────────────────────────────────────"
+            ${READELF} -d "${CLANG}" | grep -E "RUNPATH|RPATH" \
+              || echo "(no RUNPATH — check LDFLAGS)"
+
+            echo ""
+            echo "── PT_LOAD alignment (must be 0x4000 = 16384) ───────"
+            ${READELF} -l "${CLANG}" \
+              | awk "/LOAD/{p=1} p{print} /0x[0-9a-f]+$/{p=0}" \
+              | head -20
+
+            echo ""
+            echo "── ld.lld ELF header ─────────────────────────────────"
+            ${READELF} -h /system/bin/ld.lld | grep -E "(Class|Machine)"
+          '
+
+      # ── 10. Image size report ─────────────────────────────────────────────────
+      - name: Report image size
+        if: always()
+        run: |
+          IMAGE="${{ steps.docker-build.outputs.imageid }}"
+          SIZE=$(docker image inspect "${IMAGE}" \
+            --format '{{.Size}}' 2>/dev/null \
+            | awk '{printf "%.1f MB", $1/1024/1024}')
+          echo "### Build Summary" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Property | Value |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| --- | --- |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Target stage | \`${{ inputs.target_stage }}\` |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| NDK version | \`${{ inputs.ndk_version }}\` |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Android API | \`${{ inputs.api_level }}\` |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Image size | ${SIZE} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Image pushed | ${{ inputs.push_image }} |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "| Runner | \`${{ runner.name }}\` |" >> "${GITHUB_STEP_SUMMARY}"
+          echo "" >> "${GITHUB_STEP_SUMMARY}"
+          if [ "${{ inputs.push_image }}" = "true" ] && \
+             [ "${{ inputs.target_stage }}" = "final" ]; then
+            echo "**Image tags pushed:**" >> "${GITHUB_STEP_SUMMARY}"
+            echo "\`\`\`" >> "${GITHUB_STEP_SUMMARY}"
+            echo "${{ steps.meta.outputs.tags }}" >> "${GITHUB_STEP_SUMMARY}"
+            echo "\`\`\`" >> "${GITHUB_STEP_SUMMARY}"
+          fi
