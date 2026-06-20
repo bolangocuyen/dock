@@ -15,8 +15,7 @@ jobs:
           docker run --rm excedrin/adv:latest bash -c '
             set -eux
 
-            ls /system
-            ls /system/*
+            ls /system/ndk/27.3.13750724
 
             echo "=== Environment ==="
             env | grep -E "^(ANDROID|JAVA|CMAKE|PATH|LC_ALL|REACT_NATIVE)=" | sort
