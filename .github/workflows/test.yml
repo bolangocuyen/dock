@@ -15,6 +15,9 @@ jobs:
           docker run --rm excedrin/adv:latest bash -c '
             set -eux
 
+            ls /system
+            ls /system/*
+
             echo "=== Environment ==="
             env | grep -E "^(ANDROID|JAVA|CMAKE|PATH|LC_ALL|REACT_NATIVE)=" | sort
 
