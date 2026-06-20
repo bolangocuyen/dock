@@ -14,9 +14,8 @@ jobs:
         run: |
           docker run --rm excedrin/adv:latest bash -c '
             set -eux
-            cat /etc/os-release
-            cat /etc/apt/sources.list
-            ls -l /etc/apt/sources.list.d
+            apt update
+            apt install -y tree
             #tree /system/ndk/27.3.13750724
 
             echo "=== Environment ==="
