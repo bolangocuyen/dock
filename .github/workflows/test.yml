@@ -16,7 +16,7 @@ jobs:
             set -eux
             apt update
             apt install -y tree
-            tree /system/ndk/27.3.13750724
+            tree /system
 
             echo "=== Environment ==="
             env | grep -E "^(ANDROID|JAVA|CMAKE|PATH|LC_ALL|REACT_NATIVE)=" | sort
