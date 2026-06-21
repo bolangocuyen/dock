@@ -1,15 +1,12 @@
 name: Test Docker Image
-
 on:
   workflow_dispatch:
-
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Pull image
         run: docker pull excedrin/adv:latest
-
       - name: Test image
         run: |
           docker run --rm excedrin/adv:latest bash -c '
@@ -17,46 +14,34 @@ jobs:
             apt update
             apt install -y tree
             tree /system
-
             echo "=== Environment ==="
             env | grep -E "^(ANDROID|JAVA|CMAKE|PATH|LC_ALL|REACT_NATIVE)=" | sort
-
             echo "=== Java ==="
             java -version
-
             echo "=== Node ==="
             node --version
             npm --version
             yarn --version
-
             echo "=== Python ==="
             python3 --version
-
             echo "=== SDK Manager ==="
             sdkmanager --version
-
             echo "=== ADB ==="
             adb version
-
             echo "=== CMake ==="
             cmake --version
-
             echo "=== NDK ==="
             ls ${ANDROID_HOME}/ndk/
-
             echo "=== SDK Layout ==="
             ls ${ANDROID_HOME}/cmdline-tools \
                ${ANDROID_HOME}/platform-tools \
                ${ANDROID_HOME}/build-tools \
                ${ANDROID_HOME}/platforms \
                ${ANDROID_HOME}/cmake
-
             echo "=== Installed Packages ==="
             sdkmanager --list_installed
-
             echo "=== React Native Downloads ==="
             ls ${REACT_NATIVE_DOWNLOADS_DIR}/
-
             echo "=== NDK Clang (all architectures) ==="
             NDK_TOOLCHAIN=${ANDROID_HOME}/ndk/$(ls ${ANDROID_HOME}/ndk/)/toolchains/llvm/prebuilt/linux-x86_64/bin
             for triple in \
@@ -68,8 +53,52 @@ jobs:
               printf "%-45s -> " "${triple}"
               "${clang}" --version | head -1
             done
-
+            echo "=== Host Clang (AOSP prebuilt toolchain) ==="
+            HOST_CLANG=${ANDROID_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang
+            "${HOST_CLANG}" --version
+            echo "=== GCC / G++ ==="
+            gcc --version | head -1
+            g++ --version | head -1
+            echo "=== Build Systems (make/ninja/cmake) ==="
+            make --version | head -1
+            ninja --version
+            echo "=== Ccache ==="
+            ccache --version | head -1
+            echo "=== Ruby / Bundler ==="
+            ruby --version
+            gem --version
+            bundle --version
+            echo "=== Linters (jq / shellcheck) ==="
+            jq --version
+            shellcheck --version | head -2
+            echo "=== Lexer / Parser Tools (flex/bison/m4) ==="
+            flex --version
+            bison --version
+            m4 --version | head -1
+            echo "=== Compression Tools (zip/unzip/xz/zstd) ==="
+            zip --version | head -2
+            unzip -v | head -1
+            xz --version | head -1
+            zstd --version
+            echo "=== Misc Utilities (rsync/patch/texinfo/file/bc) ==="
+            rsync --version | head -1
+            patch --version | head -1
+            texi2any --version 2>/dev/null | head -1 || true
+            file --version | head -1
+            bc --version | head -1
+            echo "=== ICU (libicu-dev) ==="
+            dpkg -l | grep -i libicu || true
             echo "=== Git ==="
             git --version
             git config --global --list | grep safe
+            echo "=== Sudo ==="
+            sudo --version | head -1
+            echo "=== Timezone Data ==="
+            cat /etc/timezone 2>/dev/null || true
+            echo "=== Locale (LC_ALL) ==="
+            locale
+            echo "=== Disk Usage Summary ==="
+            df -h /
+            du -sh ${ANDROID_HOME} 2>/dev/null || true
+            du -sh ${REACT_NATIVE_DOWNLOADS_DIR} 2>/dev/null || true
           '
