@@ -30,6 +30,12 @@ jobs:
             adb version
             echo "=== CMake ==="
             cmake --version
+            echo "=== NDK ==="
+            # NDK contents were flattened directly into ${ANDROID_HOME} (no /system/ndk/<version> dir anymore)
+            cat ${ANDROID_HOME}/source.properties 2>/dev/null || echo "source.properties not found"
+            ls -d ${ANDROID_HOME}/sysroot ${ANDROID_HOME}/sources ${ANDROID_HOME}/platforms \
+                  ${ANDROID_HOME}/build ${ANDROID_HOME}/meta ${ANDROID_HOME}/shader-tools \
+                  ${ANDROID_HOME}/simpleperf 2>/dev/null || true
             echo "=== SDK Layout ==="
             ls ${ANDROID_HOME}/cmdline-tools \
                ${ANDROID_HOME}/platform-tools \
@@ -40,20 +46,28 @@ jobs:
             sdkmanager --list_installed
             echo "=== React Native Downloads ==="
             ls ${REACT_NATIVE_DOWNLOADS_DIR}/
-            echo "=== NDK Clang (all architectures) ==="
-            NDK_TOOLCHAIN=${ANDROID_HOME}/ndk/$(ls ${ANDROID_HOME}/ndk/)/toolchains/llvm/prebuilt/linux-x86_64/bin
+            echo "=== Clang Toolchain (toolchains/llvm/prebuilt/linux-x86_64) ==="
+            # NOTE: this path is repopulated from the AOSP clang-repo prebuilt AFTER the NDK
+            # flatten step wipes it (rm -rf .../linux-x86_64/*), so the NDK per-target wrapper
+            # scripts (e.g. aarch64-linux-android35-clang) no longer live here - only the
+            # plain AOSP host clang/clang++ binaries do.
+            CLANG_BIN=${ANDROID_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin
+            "${CLANG_BIN}/clang" --version
+            "${CLANG_BIN}/clang++" --version
+            echo "--- per-target wrapper scripts (expected gone after AOSP clang overwrite) ---"
             for triple in \
                 aarch64-linux-android \
                 armv7a-linux-androideabi \
                 i686-linux-android \
                 x86_64-linux-android; do
-              clang="${NDK_TOOLCHAIN}/${triple}35-clang"
+              clang="${CLANG_BIN}/${triple}35-clang"
               printf "%-45s -> " "${triple}"
-              "${clang}" --version | head -1
+              if [ -x "${clang}" ]; then
+                "${clang}" --version | head -1
+              else
+                echo "not found (overwritten by AOSP host clang)"
+              fi
             done
-            echo "=== Host Clang (AOSP prebuilt toolchain) ==="
-            HOST_CLANG=${ANDROID_HOME}/toolchains/llvm/prebuilt/linux-x86_64/bin/clang
-            "${HOST_CLANG}" --version
             echo "=== GCC / G++ ==="
             gcc --version | head -1
             g++ --version | head -1
