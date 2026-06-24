@@ -3,12 +3,7 @@ on:
   workflow_dispatch:
 jobs:
   test:
-    strategy:
-      matrix:
-        os:
-          - ubuntu-24.04
-          - ubuntu-24.04-arm
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Pull image
         run: docker pull excedrin/adv:latest
@@ -79,6 +74,7 @@ jobs:
             echo "=== Build Systems (make/ninja/cmake) ==="
             make --version | head -1
             ninja --version
+            go --version
             echo "=== Ccache ==="
             ccache --version | head -1
             echo "=== Ruby / Bundler ==="
