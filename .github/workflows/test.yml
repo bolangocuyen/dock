@@ -74,7 +74,6 @@ jobs:
             echo "=== Build Systems (make/ninja/cmake) ==="
             make --version | head -1
             ninja --version
-            go --version
             echo "=== Ccache ==="
             ccache --version | head -1
             echo "=== Ruby / Bundler ==="
