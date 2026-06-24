@@ -32,7 +32,7 @@ jobs:
             echo "=== SDK Manager ==="
             sdkmanager --version
             echo "=== ADB ==="
-            adb version
+            if [ "$(uname -m)" = "x86_64" ]; then adb version; else echo "adb skipped (not x86_64 host)"; fi
             echo "=== CMake ==="
             cmake --version
             echo "=== NDK ==="
