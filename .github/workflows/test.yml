@@ -11,9 +11,7 @@ jobs:
         run: |
           docker run --rm excedrin/adv:latest bash -c '
             set -eux
-            apt update
             file /system/bin/aarch64-linux-android/zstd
-            apt-get update && apt-get install -y qemu-user-static
             echo "=== Environment ==="
             env | grep -E "^(ANDROID|JAVA|CMAKE|PATH|LC_ALL|REACT_NATIVE)=" | sort
             echo "=== Java ==="
@@ -91,7 +89,7 @@ jobs:
             zip --version | head -2
             unzip -v | head -1
             xz --version | head -1
-            qemu-aarch64-static -L /system /system/bin/aarch64-linux-android/zstd --version
+            /usr/bin/zstd --version
             echo "=== Misc Utilities (rsync/patch/texinfo/file/bc) ==="
             rsync --version | head -1
             patch --version | head -1
