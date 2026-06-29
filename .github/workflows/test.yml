@@ -11,6 +11,7 @@ jobs:
         run: |
           docker run --rm excedrin/adv:latest bash -c '
             set -eux
+            tree /system
             file /system/bin/aarch64-linux-android/zstd
             echo "=== Environment ==="
             env | grep -E "^(ANDROID|JAVA|CMAKE|PATH|LC_ALL|REACT_NATIVE)=" | sort
